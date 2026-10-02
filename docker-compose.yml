@@ -1,0 +1,48 @@
+# docker-compose.yml - Runs your DEV environment with one command:
+#     docker compose up --build
+#
+# It starts two containers:
+#   - mongo:   a MongoDB database, with its data saved in a Docker "volume"
+#              so it survives restarts
+#   - backend: your FastAPI app, reloading automatically when you edit code
+#
+# The frontend runs separately with `npm run dev` (faster hot-reloading).
+
+services:
+  mongo:
+    image: mongo:8
+    ports:
+      - "27017:27017"            # so tests and tools on your machine can reach it
+    volumes:
+      - mongo-data:/data/db      # keeps your data when containers restart
+    healthcheck:
+      # Compose checks this to know when MongoDB is actually ready.
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build: ./backend             # build the image from backend/Dockerfile
+    env_file: ./backend/.env     # your dev settings
+    environment:
+      # Inside Docker's network, containers reach each other by service name,
+      # so "mongo" here means "the mongo container above". This overrides
+      # the localhost address in .env.
+      MONGODB_URI: mongodb://mongo:27017
+      # Makes auto-reload notice file changes on Windows and macOS.
+      WATCHFILES_FORCE_POLLING: "true"
+    ports:
+      - "8000:8000"
+    volumes:
+      # Share your code folder with the container, so edits appear instantly
+      # without rebuilding the image.
+      - ./backend/app:/app/app
+    # --reload restarts the server when code changes (development only!).
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    depends_on:
+      mongo:
+        condition: service_healthy   # wait until MongoDB passes its health check
+
+volumes:
+  mongo-data:

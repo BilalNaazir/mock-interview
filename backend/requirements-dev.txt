@@ -1,0 +1,6 @@
+# Extra packages for DEVELOPING and TESTING. Not included in the Docker image,
+# which keeps the production image smaller.
+-r requirements.txt
+pytest==9.1.1
+ruff==0.16.9
+httpx2==2.13.1   # used by FastAPI's TestClient

@@ -1,0 +1,20 @@
+# Settings for development tools.
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+# ruff is a "linter": it spots likely bugs and messy code without running it.
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+# E/F = common errors, I = import order, B = likely bugs, UP = modern Python
+select = ["E", "F", "I", "B", "UP"]
+# B008 warns about function calls in default arguments, but FastAPI's
+# Depends(...) pattern works exactly that way on purpose.
+ignore = ["B008", "B904"]
+
+[tool.ruff.lint.per-file-ignores]
+# Interview questions are long sentences; splitting them hurts readability.
+"app/seed.py" = ["E501"]

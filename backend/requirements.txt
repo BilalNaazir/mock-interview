@@ -1,0 +1,9 @@
+# Packages the app needs to RUN (installed in the Docker image).
+# Versions are "pinned" (==) so every environment - your laptop, CI, staging
+# and prod - installs exactly the same thing.
+fastapi==0.142.2
+uvicorn[standard]==0.54.0
+pymongo==4.18.2
+pydantic-settings==2.15.0
+pyjwt[crypto]==2.15.1
+httpx==0.28.1
