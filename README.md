@@ -5,7 +5,7 @@ This phase builds the skeleton everything else hangs on:
 - A **FastAPI** backend connected to **MongoDB**, listing the five interviews
 - **Login and registration with AWS Cognito**, including "Continue with Google"
 - A **React + TypeScript** frontend with a public interview list and a login-only interview page
-- **Docker Compose** to run your dev environment with one command
+- **Docker Composwwe** to run your dev environment with one command
 - **Automated tests** and a **GitHub Actions** pipeline that checks every change
 - The **dev / staging / prod** structure, ready for deployment in a later phase
 
