@@ -28,6 +28,7 @@ export default function Header() {
           <span className="muted">Checking login...</span>
         ) : auth.isAuthenticated ? (
           <>
+            <Link to="/my-interviews">My interviews</Link>
             <span className="muted">Hi, {profile?.name ?? "there"}</span>
             <button className="button secondary" onClick={logOut}>
               Log out

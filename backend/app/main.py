@@ -16,8 +16,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.db import connect_to_mongo, create_indexes
-from app.routers import health, interviews, users
+from app.routers import attempts, health, interviews, users
 from app.seed import seed_interviews
+from app.storage import VideoStorage
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("mock_interview")
@@ -35,8 +36,12 @@ async def lifespan(app: FastAPI):
     await create_indexes(db)
     await seed_interviews(db)
 
-    # Store the database on app.state so endpoints can reach it (see get_db).
+    # Store shared objects on app.state so endpoints can reach them
+    # (see get_db and get_storage).
     app.state.db = db
+    app.state.storage = VideoStorage(settings)
+    if not app.state.storage.is_configured:
+        logger.warning("S3_VIDEOS_BUCKET is not set - recording uploads will be unavailable")
     logger.info("Started in '%s' environment, database '%s'", settings.environment, settings.mongodb_db_name)
 
     yield  # <- the app runs and serves requests here
@@ -67,6 +72,7 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(users.router)
     app.include_router(interviews.router)
+    app.include_router(attempts.router)
     return app
 
 

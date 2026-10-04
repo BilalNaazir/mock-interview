@@ -34,10 +34,27 @@ class Settings(BaseSettings):
     # --- Login (AWS Cognito) ----------------------------------------------
     # Each environment has its OWN Cognito user pool, so test accounts in
     # staging can never log into production.
-    cognito_region: str = "eu-west-2"
-    cognito_user_pool_id: str = ""   # e.g. "eu-west-2_AbC123xyz"
+    cognito_region: str = "eu-north-1"
+    cognito_user_pool_id: str = ""   # e.g. "eu-north-1_AbC123xyz"
     cognito_client_id: str = ""      # the app client ID from Cognito
-    cognito_domain: str = ""         # e.g. "https://my-app-dev.auth.eu-west-2.amazoncognito.com"
+    cognito_domain: str = ""         # e.g. "https://my-app-dev.auth.eu-north-1.amazoncognito.com"
+
+    # --- Video storage (AWS S3) --------------------------------------------
+    # Each environment has its OWN bucket, so dev recordings never mix with
+    # real users' recordings in prod.
+    aws_region: str = "eu-north-1"
+    s3_videos_bucket: str = ""       # e.g. "mock-interview-dev-videos-bilal"
+
+    # AWS access keys are NOT listed here on purpose. boto3 (the AWS library)
+    # reads AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY from the environment
+    # by itself. In dev they come from your .env file; on AWS (Phase 6) there
+    # will be no keys at all - the container gets permissions from an IAM role.
+
+    # --- Recording limits -----------------------------------------------------
+    max_recording_seconds: int = 180       # 3 minutes per answer
+    max_upload_mb: int = 100               # far more than 3 minutes needs
+    upload_url_expiry_seconds: int = 600   # a presigned upload link works for 10 minutes
+    video_url_expiry_seconds: int = 3600   # a playback link works for 1 hour
 
     # --- Browser access (CORS) ----------------------------------------------
     # Which website addresses may call this API. Comma-separated, because
@@ -49,6 +66,10 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def max_upload_bytes(self) -> int:
+        return self.max_upload_mb * 1024 * 1024
 
     @property
     def cognito_issuer(self) -> str:

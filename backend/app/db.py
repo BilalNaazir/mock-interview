@@ -15,7 +15,7 @@ MongoDB basics, if you're new to it:
 """
 
 from fastapi import Request
-from pymongo import ASCENDING, AsyncMongoClient
+from pymongo import ASCENDING, DESCENDING, AsyncMongoClient
 from pymongo.asynchronous.database import AsyncDatabase
 
 from app.config import Settings
@@ -45,6 +45,11 @@ async def create_indexes(db: AsyncDatabase) -> None:
     """
     await db.users.create_index([("cognito_sub", ASCENDING)], unique=True)
     await db.interviews.create_index([("slug", ASCENDING)], unique=True)
+
+    # Phase 2: "my attempts, newest first" is a common lookup, so index it.
+    await db.attempts.create_index([("user_sub", ASCENDING), ("started_at", DESCENDING)])
+    # Exactly one answer per question per attempt - enforced by the database.
+    await db.answers.create_index([("attempt_id", ASCENDING), ("question_order", ASCENDING)], unique=True)
 
 
 def get_db(request: Request) -> AsyncDatabase:
