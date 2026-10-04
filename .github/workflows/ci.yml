@@ -101,5 +101,7 @@ jobs:
     needs: backend   # only bother if the tests passed
     steps:
       - uses: actions/checkout@v7
-      - name: Build image (not pushed anywhere yet)
+      - name: Build API image (not pushed anywhere yet)
         run: docker build -t mock-interview-backend:ci ./backend
+      - name: Build worker image
+        run: docker build -f ./backend/Dockerfile.worker -t mock-interview-worker:ci ./backend

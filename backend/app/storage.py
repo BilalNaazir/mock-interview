@@ -100,6 +100,10 @@ class VideoStorage:
             content_type=response.get("ContentType", ""),
         )
 
+    def download_to_file(self, key: str, path: str) -> None:
+        """Copy a video from S3 to a file on this machine (used by the worker)."""
+        self.client.download_file(self.bucket, key, path)
+
     def delete(self, key: str) -> None:
         self.client.delete_object(Bucket=self.bucket, Key=key)
 

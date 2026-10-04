@@ -5,8 +5,9 @@ Tests run against a REAL MongoDB (from Docker Compose locally, or a service
 container in GitHub Actions), but in a separate "mock_interview_test"
 database that gets wiped afterwards - so tests never touch your dev data.
 
-S3 is FAKED with moto: it pretends to be AWS, entirely in memory. So the
-tests never touch your real bucket, cost nothing, and need no AWS keys.
+S3 and SQS are FAKED with moto: it pretends to be AWS, entirely in memory.
+So the tests never touch your real bucket or queue, cost nothing, and need
+no AWS keys.
 """
 
 import os
@@ -22,6 +23,11 @@ os.environ["COGNITO_CLIENT_ID"] = "test-client-id"
 os.environ["COGNITO_DOMAIN"] = "https://test.auth.eu-north-1.amazoncognito.com"
 os.environ["AWS_REGION"] = "eu-north-1"
 os.environ["S3_VIDEOS_BUCKET"] = "test-videos-bucket"
+# moto's fake AWS uses the account ID 123456789012.
+os.environ["SQS_PROCESSING_QUEUE_URL"] = "https://sqs.eu-north-1.amazonaws.com/123456789012/test-processing"
+# Make the WebSocket check for changes very often, so tests run fast.
+os.environ["WS_POLL_INTERVAL_SECONDS"] = "0.05"
+os.environ["WS_AUTH_TIMEOUT_SECONDS"] = "0.5"
 # Fake AWS keys. moto accepts anything; these guarantee that even a mistake
 # could never use your real AWS account from a test.
 os.environ["AWS_ACCESS_KEY_ID"] = "testing"
@@ -86,6 +92,14 @@ def s3():
             CreateBucketConfiguration={"LocationConstraint": "eu-north-1"},
         )
         yield client
+
+
+@pytest.fixture(autouse=True)
+def sqs(s3):
+    """A fake, empty processing queue (inside the same fake AWS as s3)."""
+    client = boto3.client("sqs", region_name="eu-north-1")
+    client.create_queue(QueueName="test-processing")
+    yield client
 
 
 def make_client(user: dict | None):

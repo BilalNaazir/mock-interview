@@ -56,6 +56,30 @@ class Settings(BaseSettings):
     upload_url_expiry_seconds: int = 600   # a presigned upload link works for 10 minutes
     video_url_expiry_seconds: int = 3600   # a playback link works for 1 hour
 
+    # --- Processing answers (Phase 3) ---------------------------------------
+    # The SQS queue that holds "please process this answer" jobs. Empty means
+    # processing is switched off, and answers are just stored.
+    sqs_processing_queue_url: str = ""
+    # How many times the worker tries one job before giving up. This should
+    # match the "maximum receives" setting of the queue's dead-letter queue.
+    max_processing_attempts: int = 3
+
+    # Whisper speech-to-text, running inside the worker. "base.en" is small
+    # and fast on a normal CPU; "small.en" is more accurate but slower.
+    whisper_model: str = "base.en"
+    whisper_compute_type: str = "int8"   # a compact number format that suits CPUs
+
+    # The Claude model that scores knowledge answers. A smaller, cheaper model
+    # is plenty for checking an answer against a list of key points - the
+    # "right model for the job" idea from our cost discussion.
+    # (The API key isn't listed here: the anthropic library reads
+    # ANTHROPIC_API_KEY from the environment by itself, like boto3 does.)
+    scoring_model: str = "claude-haiku-4-5-20251001"
+
+    # --- Live updates (WebSockets) -------------------------------------------
+    ws_auth_timeout_seconds: float = 10.0   # time allowed to send the login token
+    ws_poll_interval_seconds: float = 2.0   # how often to check for new results
+
     # --- Browser access (CORS) ----------------------------------------------
     # Which website addresses may call this API. Comma-separated, because
     # environment variables are plain text. In dev this is the Vite server.

@@ -75,3 +75,22 @@ a { color: var(--accent); }
 .answer h2 { font-size: 1.05rem; }
 .button:disabled { opacity: 0.5; cursor: not-allowed; }
 h1 .badge { vertical-align: middle; }
+
+/* --- Phase 3: results --- */
+.results { margin-top: 12px; }
+.results h3 { font-size: 0.95rem; margin: 12px 0 4px; }
+.score { display: flex; align-items: center; gap: 10px; font-size: 1.1rem; }
+.score strong { font-size: 1.6rem; }
+.score-bar { flex: 1; max-width: 300px; height: 8px; background: var(--border); border-radius: 999px; overflow: hidden; }
+.score-bar div { height: 100%; background: var(--accent); }
+.points { margin: 0; padding-left: 20px; }
+.points.covered li::marker { content: "✓  "; color: #1a7f37; }
+.points.missing li::marker { content: "+  "; color: var(--muted); }
+.transcript { white-space: pre-wrap; color: var(--muted); }
+details summary { cursor: pointer; margin-top: 12px; }
+.spinner {
+  display: inline-block; width: 12px; height: 12px; margin-right: 8px; vertical-align: -1px;
+  border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }

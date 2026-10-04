@@ -16,6 +16,7 @@ doesn't exist OR belongs to someone else, we answer 404 either way, so the
 response doesn't even reveal that it exists.
 """
 
+import logging
 import uuid
 from datetime import UTC, datetime
 
@@ -37,9 +38,11 @@ from app.models import (
     UploadUrlResponse,
     VideoUrlResponse,
 )
+from app.queue import JobQueue, get_queue
 from app.storage import VideoStorage, get_storage
 
 router = APIRouter(prefix="/attempts", tags=["attempts"])
+logger = logging.getLogger("mock_interview.attempts")
 
 # The video formats we accept, and the file extension for each. Chrome, Edge
 # and Firefox record WebM; Safari records MP4.
@@ -80,10 +83,24 @@ def require_storage(storage: VideoStorage) -> None:
 
 async def build_attempt_detail(db: AsyncDatabase, attempt: dict, settings: Settings) -> dict:
     interview = await load_interview(db, attempt["interview_slug"])
-    answered = await db.answers.find(
-        {"attempt_id": attempt["_id"], "status": "answered"}, {"question_order": 1}
-    ).to_list()
-    answered_orders = {a["question_order"] for a in answered}
+    answers = await db.answers.find({"attempt_id": attempt["_id"], "status": "answered"}).to_list()
+    answers_by_order = {a["question_order"]: a for a in answers}
+
+    def results_for(order: int) -> dict:
+        """The worker's results for one question, if there are any yet."""
+        answer = answers_by_order.get(order)
+        if answer is None:
+            return {"answered": False}
+        main = next((r for r in answer["recordings"] if r["kind"] == "main"), {})
+        evaluation = answer.get("evaluation")
+        return {
+            "answered": True,
+            "processing_status": answer.get("processing", {}).get("status"),
+            "transcript": main.get("transcript"),
+            # The stored evaluation has extra bookkeeping fields (kind, model);
+            # the Evaluation model in the response keeps only the public ones.
+            "evaluation": evaluation,
+        }
 
     return {
         "attempt_id": str(attempt["_id"]),
@@ -92,7 +109,7 @@ async def build_attempt_detail(db: AsyncDatabase, attempt: dict, settings: Setti
         "status": attempt["status"],
         "current_question": attempt["current_question"],
         "questions": [
-            {"order": q["order"], "type": q["type"], "text": q["text"], "answered": q["order"] in answered_orders}
+            {"order": q["order"], "type": q["type"], "text": q["text"], **results_for(q["order"])}
             for q in sorted(interview["questions"], key=lambda q: q["order"])
         ],
         "limits": {
@@ -284,6 +301,7 @@ async def complete_recording(
     db: AsyncDatabase = Depends(get_db),
     user: dict = Depends(get_current_user),
     storage: VideoStorage = Depends(get_storage),
+    queue: JobQueue = Depends(get_queue),
 ):
     require_storage(storage)
     attempt = await load_own_attempt(db, attempt_id, user)
@@ -319,12 +337,16 @@ async def complete_recording(
         {**r, "status": "uploaded", "uploaded_at": now} if r["recording_id"] == recording_id else r
         for r in answer["recordings"]
     ]
-    await db.answers.update_one(
+    marked = await db.answers.update_one(
         # Only update if the answer is still being recorded. If two requests
         # race each other, the second one finds nothing to update.
         {"_id": answer["_id"], "status": "recording"},
         {"$set": {"recordings": updated_recordings, "status": "answered", "answered_at": now}},
     )
+    # Only the request that actually marked it answered sends the job, so a
+    # double-click can never queue the same recording twice.
+    if marked.modified_count == 1:
+        await queue_for_processing(db, queue, answer["_id"], recording_id)
 
     # Move on to the next question. Including current_question in the filter
     # means two simultaneous requests can't BOTH move it forward.
@@ -341,12 +363,39 @@ async def complete_recording(
         },
     )
 
-    # Phase 3: this is where a job goes onto the SQS queue for transcription.
     # Phase 4: for situational questions, the STAR check decides whether to
     #          ask a follow-up instead of moving to the next question.
 
     fresh = await db.attempts.find_one({"_id": attempt["_id"]})
     return {"status": fresh["status"], "current_question": fresh["current_question"]}
+
+
+async def queue_for_processing(db: AsyncDatabase, queue: JobQueue, answer_id: ObjectId, recording_id: str) -> None:
+    """Put a "transcribe and score this" job onto the SQS queue."""
+    now = datetime.now(UTC)
+    if not queue.is_configured:
+        await db.answers.update_one(
+            {"_id": answer_id},
+            {"$set": {"processing": {"status": "not_configured", "error": None, "updated_at": now}}},
+        )
+        return
+
+    # ORDER MATTERS: mark it "queued" BEFORE sending the job. The worker can
+    # be very quick - if we sent first, it might set "transcribing" and then
+    # this line would overwrite it with "queued", so the status went backwards.
+    await db.answers.update_one(
+        {"_id": answer_id},
+        {"$set": {"processing": {"status": "queued", "error": None, "updated_at": now}}},
+    )
+    try:
+        await run_in_threadpool(queue.send_processing_job, str(answer_id), recording_id)
+    except Exception:
+        # The video is safely stored either way; only the processing is missing.
+        logger.exception("Couldn't queue answer %s for processing", answer_id)
+        await db.answers.update_one(
+            {"_id": answer_id},
+            {"$set": {"processing": {"status": "failed", "error": "Couldn't start processing", "updated_at": now}}},
+        )
 
 
 # ---------------------------------------------------------------------------

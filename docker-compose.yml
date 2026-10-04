@@ -1,10 +1,11 @@
 # docker-compose.yml - Runs your DEV environment with one command:
 #     docker compose up --build
 #
-# It starts two containers:
+# It starts three containers:
 #   - mongo:   a MongoDB database, with its data saved in a Docker "volume"
 #              so it survives restarts
 #   - backend: your FastAPI app, reloading automatically when you edit code
+#   - worker:  takes jobs off the SQS queue, transcribes and scores answers
 #
 # The frontend runs separately with `npm run dev` (faster hot-reloading).
 
@@ -12,7 +13,8 @@ services:
   mongo:
     image: mongo:8
     ports:
-      - "27017:27017"            # so tests and tools on your machine can reach it
+      # 127.0.0.1 = only reachable from THIS computer, not the rest of the network
+      - "127.0.0.1:27017:27017"
     volumes:
       - mongo-data:/data/db      # keeps your data when containers restart
     healthcheck:
@@ -33,7 +35,7 @@ services:
       # Makes auto-reload notice file changes on Windows and macOS.
       WATCHFILES_FORCE_POLLING: "true"
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     volumes:
       # Share your code folder with the container, so edits appear instantly
       # without rebuilding the image.
@@ -44,5 +46,26 @@ services:
       mongo:
         condition: service_healthy   # wait until MongoDB passes its health check
 
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.worker   # the worker's own recipe
+    env_file: ./backend/.env
+    environment:
+      MONGODB_URI: mongodb://mongo:27017
+    volumes:
+      # Shares your code like the backend does. The worker doesn't reload by
+      # itself, though: after editing worker code, run
+      #   docker compose restart worker
+      - ./backend/app:/app/app
+      # Keeps the downloaded Whisper model, so it's only downloaded once.
+      - whisper-models:/home/appuser/.cache/huggingface
+    depends_on:
+      mongo:
+        condition: service_healthy
+    # The worker has no ports: nothing connects TO it. It reaches out to
+    # SQS, S3, MongoDB and Claude by itself.
+
 volumes:
   mongo-data:
+  whisper-models:

@@ -18,6 +18,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from app.scoring import Evaluation
+
 
 class Question(BaseModel):
     order: int                                      # 1 to 5
@@ -73,11 +75,20 @@ class StartAttemptResponse(BaseModel):
     resumed: bool  # True if an unfinished attempt already existed and was reused
 
 
+# Where an answer is in the processing pipeline (Phase 3). The browser shows
+# this, and the WebSocket announces each change.
+ProcessingStatus = Literal["queued", "transcribing", "scoring", "done", "failed", "not_configured"]
+
+
 class AttemptQuestion(BaseModel):
     order: int
     type: Literal["knowledge", "situational"]
     text: str
     answered: bool
+    # Phase 3: filled in by the worker. None until there's something to show.
+    processing_status: ProcessingStatus | None = None
+    transcript: str | None = None
+    evaluation: Evaluation | None = None
 
 
 class RecordingLimits(BaseModel):
