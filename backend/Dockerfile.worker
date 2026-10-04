@@ -1,0 +1,24 @@
+# Dockerfile.worker - the recipe for the background worker's image.
+# Same code as the API, but with the speech-to-text and AI libraries added,
+# and a different start command.
+
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+COPY requirements.txt requirements-worker.txt ./
+RUN pip install --no-cache-dir -r requirements-worker.txt
+
+COPY app ./app
+
+RUN useradd --create-home appuser \
+    # Folder where the Whisper model is cached after its first download.
+    # Docker Compose mounts a volume here, so the model survives restarts.
+    && mkdir -p /home/appuser/.cache/huggingface \
+    && chown -R appuser /home/appuser/.cache
+USER appuser
+
+CMD ["python", "-m", "app.worker"]

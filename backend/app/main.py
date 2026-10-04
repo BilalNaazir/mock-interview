@@ -16,7 +16,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.db import connect_to_mongo, create_indexes
-from app.routers import attempts, health, interviews, users
+from app.queue import JobQueue
+from app.routers import attempts, health, interviews, live, users
 from app.seed import seed_interviews
 from app.storage import VideoStorage
 
@@ -42,6 +43,9 @@ async def lifespan(app: FastAPI):
     app.state.storage = VideoStorage(settings)
     if not app.state.storage.is_configured:
         logger.warning("S3_VIDEOS_BUCKET is not set - recording uploads will be unavailable")
+    app.state.queue = JobQueue(settings)
+    if not app.state.queue.is_configured:
+        logger.warning("SQS_PROCESSING_QUEUE_URL is not set - answers will be stored but not processed")
     logger.info("Started in '%s' environment, database '%s'", settings.environment, settings.mongodb_db_name)
 
     yield  # <- the app runs and serves requests here
@@ -73,6 +77,7 @@ def create_app() -> FastAPI:
     app.include_router(users.router)
     app.include_router(interviews.router)
     app.include_router(attempts.router)
+    app.include_router(live.router)
     return app
 
 

@@ -40,8 +40,21 @@ export interface StartAttemptResponse {
   resumed: boolean;
 }
 
+// Phase 3: where an answer is in the processing pipeline.
+export type ProcessingStatus = "queued" | "transcribing" | "scoring" | "done" | "failed" | "not_configured";
+
+export interface Evaluation {
+  score: number; // 0-100
+  covered_points: string[];
+  missing_points: string[];
+  feedback: string;
+}
+
 export interface AttemptQuestion extends Question {
   answered: boolean;
+  processing_status: ProcessingStatus | null;
+  transcript: string | null;
+  evaluation: Evaluation | null;
 }
 
 export interface RecordingLimits {

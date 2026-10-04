@@ -1,0 +1,9 @@
+# Extra packages for the WORKER only. The API's Docker image doesn't include
+# these, which keeps it small and quick to build and start.
+-r requirements.txt
+faster-whisper==1.2.1
+# PyAV reads the audio out of video files. Version 19 removed an option that
+# faster-whisper 1.2.1 still uses, which crashes transcription, so we stay on
+# the newest version that works with it.
+av==18.1.0
+anthropic==1.11.0
