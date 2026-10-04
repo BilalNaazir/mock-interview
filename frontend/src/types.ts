@@ -30,3 +30,60 @@ export interface UserProfile {
   name: string;
   share_answers_by_default: boolean;
 }
+
+// --- Phase 2: taking an interview ---------------------------------------
+
+export type AttemptStatus = "in_progress" | "completed";
+
+export interface StartAttemptResponse {
+  attempt_id: string;
+  resumed: boolean;
+}
+
+export interface AttemptQuestion extends Question {
+  answered: boolean;
+}
+
+export interface RecordingLimits {
+  max_recording_seconds: number;
+  max_upload_bytes: number;
+  allowed_content_types: string[];
+}
+
+export interface AttemptDetail {
+  attempt_id: string;
+  interview_slug: string;
+  interview_title: string;
+  status: AttemptStatus;
+  current_question: number;
+  questions: AttemptQuestion[];
+  limits: RecordingLimits;
+}
+
+export interface AttemptSummary {
+  attempt_id: string;
+  interview_slug: string;
+  interview_title: string;
+  status: AttemptStatus;
+  answered_count: number;
+  question_count: number;
+  started_at: string; // dates arrive as text in JSON
+}
+
+export interface UploadUrlResponse {
+  recording_id: string;
+  upload_url: string;
+  upload_headers: Record<string, string>;
+  expires_in_seconds: number;
+}
+
+export interface CompleteRecordingResponse {
+  status: AttemptStatus;
+  current_question: number;
+}
+
+export interface VideoUrlResponse {
+  url: string;
+  content_type: string;
+  expires_in_seconds: number;
+}
