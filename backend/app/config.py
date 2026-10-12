@@ -76,6 +76,11 @@ class Settings(BaseSettings):
     # ANTHROPIC_API_KEY from the environment by itself, like boto3 does.)
     scoring_model: str = "claude-haiku-4-5-20251001"
 
+    # --- STAR follow-ups (Phase 4) -------------------------------------------
+    # The most follow-up questions asked for one situational question. Our
+    # CODE enforces this limit - we never rely on the AI to stop by itself.
+    max_follow_ups: int = 3
+
     # --- Live updates (WebSockets) -------------------------------------------
     ws_auth_timeout_seconds: float = 10.0   # time allowed to send the login token
     ws_poll_interval_seconds: float = 2.0   # how often to check for new results

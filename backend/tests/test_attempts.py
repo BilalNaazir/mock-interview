@@ -9,6 +9,8 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
+from tests.helpers import make_worker_context, run_worker
+
 FAKE_VIDEO = b"pretend this is a video" * 100
 
 
@@ -75,13 +77,16 @@ def test_new_attempt_starts_at_question_1(logged_in_client):
 # The full happy path
 # ---------------------------------------------------------------------------
 
-def test_answering_all_five_questions_completes_the_attempt(logged_in_client, s3):
+def test_answering_all_five_questions_completes_the_attempt(logged_in_client, s3, db):
     attempt_id = start(logged_in_client)
+    worker = make_worker_context(db)  # with a fake Claude that finds every STAR answer clear
 
     for order in range(1, 6):
         response = answer_question(logged_in_client, s3, attempt_id, order)
         assert response.status_code == 200, response.text
-        assert response.json()["current_question"] == order + 1
+        # Situational answers (4 and 5) wait for the worker's STAR check.
+        run_worker(worker)
+        assert logged_in_client.get(f"/attempts/{attempt_id}").json()["current_question"] == order + 1
 
     attempt = logged_in_client.get(f"/attempts/{attempt_id}").json()
     assert attempt["status"] == "completed"
@@ -92,10 +97,12 @@ def test_answering_all_five_questions_completes_the_attempt(logged_in_client, s3
     assert summary["status"] == "completed"
 
 
-def test_finished_interview_cannot_be_answered_again(logged_in_client, s3):
+def test_finished_interview_cannot_be_answered_again(logged_in_client, s3, db):
     attempt_id = start(logged_in_client)
+    worker = make_worker_context(db)
     for order in range(1, 6):
         answer_question(logged_in_client, s3, attempt_id, order)
+        run_worker(worker)
     assert request_upload(logged_in_client, attempt_id, 5).status_code == 409
 
 

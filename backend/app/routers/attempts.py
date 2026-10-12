@@ -1,13 +1,21 @@
 """
 attempts.py - Taking an interview.
 
-The flow for each question:
+The flow for each recording:
   1. POST .../upload-url   -> "I recorded my answer, where do I put it?"
                               We check everything, then hand back a presigned URL.
   2. (the browser uploads the video straight to S3 - not through us)
   3. POST .../complete     -> "Upload finished."
-                              We check S3 really has the file, mark the question
-                              answered, and move on to the next question.
+                              We check S3 really has the file, then:
+                              - KNOWLEDGE question: mark it answered, queue it
+                                for scoring, and move to the next question.
+                              - SITUATIONAL question (Phase 4): queue it for STAR
+                                evaluation and WAIT. The worker then either asks
+                                a follow-up question (and the user records again)
+                                or accepts the answer and moves the interview on.
+
+The browser always just asks for an upload URL for the CURRENT question; the
+backend works out whether that's the main answer or a follow-up answer.
 
 AUTHORIZATION RULE used in every endpoint: you can only see or change YOUR OWN
 attempts. Every database lookup includes the logged-in user's ID, so changing
@@ -28,6 +36,7 @@ from pymongo.asynchronous.database import AsyncDatabase
 from app.auth import get_current_user
 from app.config import Settings, get_settings
 from app.db import get_db
+from app.interview_flow import next_question_fields
 from app.models import (
     AttemptDetail,
     AttemptSummary,
@@ -81,26 +90,65 @@ def require_storage(storage: VideoStorage) -> None:
         raise HTTPException(status_code=503, detail="Video storage isn't configured (S3_VIDEOS_BUCKET is empty)")
 
 
+def pending_follow_up(answer: dict) -> dict | None:
+    """The follow-up question currently waiting for an answer, if there is one."""
+    return next((f for f in answer.get("follow_ups", []) if f["status"] == "awaiting_answer"), None)
+
+
+async def advance_attempt(db: AsyncDatabase, attempt: dict, order: int) -> None:
+    """Move the interview on from question `order`."""
+    await db.attempts.update_one(
+        # Including current_question in the filter means two simultaneous
+        # requests can't BOTH move it forward.
+        {"_id": attempt["_id"], "current_question": order},
+        {"$set": next_question_fields(order, attempt["question_count"], datetime.now(UTC))},
+    )
+
+
 async def build_attempt_detail(db: AsyncDatabase, attempt: dict, settings: Settings) -> dict:
     interview = await load_interview(db, attempt["interview_slug"])
-    answers = await db.answers.find({"attempt_id": attempt["_id"], "status": "answered"}).to_list()
+    answers = await db.answers.find({"attempt_id": attempt["_id"]}).to_list()
     answers_by_order = {a["question_order"]: a for a in answers}
 
     def results_for(order: int) -> dict:
-        """The worker's results for one question, if there are any yet."""
+        """What the browser should know about one question's answer."""
         answer = answers_by_order.get(order)
         if answer is None:
             return {"answered": False}
-        main = next((r for r in answer["recordings"] if r["kind"] == "main"), {})
-        evaluation = answer.get("evaluation")
+        transcripts = {r["recording_id"]: r.get("transcript") for r in answer["recordings"]}
+        main = next((r for r in answer["recordings"] if r["kind"] == "main" and r["status"] == "uploaded"), {})
         return {
-            "answered": True,
+            "answered": answer["status"] == "answered",
             "processing_status": answer.get("processing", {}).get("status"),
             "transcript": main.get("transcript"),
-            # The stored evaluation has extra bookkeeping fields (kind, model);
-            # the Evaluation model in the response keeps only the public ones.
-            "evaluation": evaluation,
+            "recording_id": main.get("recording_id"),
+            # The stored evaluation has extra bookkeeping fields (like model);
+            # the response models keep only the public ones.
+            "evaluation": answer.get("evaluation"),
+            "follow_ups": [
+                {
+                    "number": f["number"],
+                    "question": f["question"],
+                    "answered": f["status"] == "answered",
+                    "recording_id": f.get("recording_id"),
+                    "transcript": transcripts.get(f.get("recording_id")),
+                }
+                for f in sorted(answer.get("follow_ups", []), key=lambda f: f["number"])
+            ],
         }
+
+    # What should the interview screen show right now?
+    current_step, follow_up_prompt = "record_answer", None
+    if attempt["status"] == "completed":
+        current_step = "finished"
+    else:
+        current = answers_by_order.get(attempt["current_question"])
+        if current is not None and current["status"] == "evaluating":
+            current_step = "evaluating"  # waiting for the worker's STAR check
+        elif current is not None and current["status"] == "awaiting_follow_up":
+            current_step = "record_follow_up"
+            pending = pending_follow_up(current)
+            follow_up_prompt = {"number": pending["number"], "question": pending["question"]}
 
     return {
         "attempt_id": str(attempt["_id"]),
@@ -108,6 +156,8 @@ async def build_attempt_detail(db: AsyncDatabase, attempt: dict, settings: Setti
         "interview_title": interview["title"],
         "status": attempt["status"],
         "current_question": attempt["current_question"],
+        "current_step": current_step,
+        "pending_follow_up": follow_up_prompt,
         "questions": [
             {"order": q["order"], "type": q["type"], "text": q["text"], **results_for(q["order"])}
             for q in sorted(interview["questions"], key=lambda q: q["order"])
@@ -116,6 +166,7 @@ async def build_attempt_detail(db: AsyncDatabase, attempt: dict, settings: Setti
             "max_recording_seconds": settings.max_recording_seconds,
             "max_upload_bytes": settings.max_upload_bytes,
             "allowed_content_types": list(ALLOWED_CONTENT_TYPES),
+            "max_follow_ups": settings.max_follow_ups,
         },
     }
 
@@ -196,7 +247,7 @@ async def get_attempt(
 
 
 # ---------------------------------------------------------------------------
-# Uploading an answer
+# Uploading a recording (a main answer or a follow-up answer)
 # ---------------------------------------------------------------------------
 
 @router.post("/{attempt_id}/questions/{order}/upload-url", response_model=UploadUrlResponse)
@@ -230,21 +281,33 @@ async def create_upload_url(
     interview = await load_interview(db, attempt["interview_slug"])
     question = next(q for q in interview["questions"] if q["order"] == order)
 
-    existing_answer = await db.answers.find_one({"attempt_id": attempt["_id"], "question_order": order})
-    if existing_answer is not None and existing_answer["status"] == "answered":
+    # Is this recording the MAIN answer, or the answer to a FOLLOW-UP question?
+    # The answer's status tells us.
+    answer = await db.answers.find_one({"attempt_id": attempt["_id"], "question_order": order})
+    follow_up_number = None
+    if answer is None or answer["status"] == "recording":
+        kind = "main"
+    elif answer["status"] == "awaiting_follow_up":
+        kind = "follow_up"
+        follow_up_number = pending_follow_up(answer)["number"]
+    elif answer["status"] == "evaluating":
+        raise HTTPException(status_code=409, detail="We're still reviewing your answer - please wait a moment")
+    else:
         raise HTTPException(status_code=409, detail="This question has already been answered")
 
     recording_id = uuid.uuid4().hex  # a random, unguessable ID
+    label = "main" if kind == "main" else f"followup{follow_up_number}"
     # Where the file will live in the bucket. Grouping by user and attempt
     # makes it easy to find (or delete) everything belonging to one person.
     video_key = (
         f"videos/{user['cognito_sub']}/{attempt_id}/"
-        f"q{order}-{recording_id}.{ALLOWED_CONTENT_TYPES[content_type]}"
+        f"q{order}-{label}-{recording_id}.{ALLOWED_CONTENT_TYPES[content_type]}"
     )
     now = datetime.now(UTC)
     recording = {
         "recording_id": recording_id,
-        "kind": "main",  # Phase 4 adds "follow_up" recordings for situational questions
+        "kind": kind,
+        "follow_up_number": follow_up_number,
         "video_key": video_key,
         "content_type": content_type,
         "size_bytes": body.size_bytes,
@@ -253,9 +316,12 @@ async def create_upload_url(
         "uploaded_at": None,
     }
 
+    # Keep every recording that's already uploaded, drop any unfinished one
+    # (e.g. from an upload that failed), and add this new one.
+    kept = [r for r in answer["recordings"] if r["status"] == "uploaded"] if answer else []
+
     # One answer document per question. "Upsert" creates it on the first
-    # try; if the user retries (say, the upload failed), the unfinished
-    # recording is simply replaced by the new one.
+    # recording; after that, it just updates the list of recordings.
     await db.answers.update_one(
         {"attempt_id": attempt["_id"], "question_order": order},
         {
@@ -269,10 +335,11 @@ async def create_upload_url(
                 # even if the question is reworded later.
                 "question_text": question["text"],
                 "status": "recording",
+                "follow_ups": [],
                 "visibility": "private",  # nobody else can see it (sharing comes in Phase 5)
                 "created_at": now,
             },
-            "$set": {"recordings": [recording]},
+            "$set": {"recordings": [*kept, recording]},
         },
         upsert=True,
     )
@@ -282,6 +349,8 @@ async def create_upload_url(
     upload_url = await run_in_threadpool(storage.presign_upload, video_key, content_type, body.size_bytes)
     return {
         "recording_id": recording_id,
+        "kind": kind,
+        "follow_up_number": follow_up_number,
         "upload_url": upload_url,
         # The browser must send this header exactly, or S3 rejects the upload.
         # (It sends Content-Length by itself; browsers don't let code set it.)
@@ -333,52 +402,60 @@ async def complete_recording(
     now = datetime.now(UTC)
     # Build the updated list of recordings in Python: the same list, with
     # this one recording marked as uploaded. Then save the whole list.
-    updated_recordings = [
-        {**r, "status": "uploaded", "uploaded_at": now} if r["recording_id"] == recording_id else r
-        for r in answer["recordings"]
-    ]
-    marked = await db.answers.update_one(
-        # Only update if the answer is still being recorded. If two requests
-        # race each other, the second one finds nothing to update.
-        {"_id": answer["_id"], "status": "recording"},
-        {"$set": {"recordings": updated_recordings, "status": "answered", "answered_at": now}},
-    )
-    # Only the request that actually marked it answered sends the job, so a
+    updates = {
+        "recordings": [
+            {**r, "status": "uploaded", "uploaded_at": now} if r["recording_id"] == recording_id else r
+            for r in answer["recordings"]
+        ],
+    }
+    if recording["kind"] == "follow_up":
+        # Link the follow-up question to the recording that answers it.
+        updates["follow_ups"] = [
+            {**f, "status": "answered", "recording_id": recording_id}
+            if f["number"] == recording["follow_up_number"] else f
+            for f in answer.get("follow_ups", [])
+        ]
+
+    # Situational answers wait for the worker's STAR check, which decides
+    # whether to ask a follow-up. That's only possible if processing is set up;
+    # otherwise the answer is simply accepted as it is.
+    waits_for_star_check = answer["question_type"] == "situational" and queue.is_configured
+    updates["status"] = "evaluating" if waits_for_star_check else "answered"
+    if not waits_for_star_check:
+        updates["answered_at"] = now
+
+    # Only update if the answer is in the status we expect. If two requests
+    # race each other, the second one finds nothing to update.
+    expected_status = "recording" if recording["kind"] == "main" else "awaiting_follow_up"
+    marked = await db.answers.update_one({"_id": answer["_id"], "status": expected_status}, {"$set": updates})
+
+    # Only the request that actually updated the answer carries on, so a
     # double-click can never queue the same recording twice.
     if marked.modified_count == 1:
-        await queue_for_processing(db, queue, answer["_id"], recording_id)
-
-    # Move on to the next question. Including current_question in the filter
-    # means two simultaneous requests can't BOTH move it forward.
-    next_question = order + 1
-    finished = next_question > attempt["question_count"]
-    await db.attempts.update_one(
-        {"_id": attempt["_id"], "current_question": order},
-        {
-            "$set": {
-                "current_question": next_question,
-                "status": "completed" if finished else "in_progress",
-                "completed_at": now if finished else None,
-            }
-        },
-    )
-
-    # Phase 4: for situational questions, the STAR check decides whether to
-    #          ask a follow-up instead of moving to the next question.
+        queued = await queue_for_processing(db, queue, answer["_id"], recording_id)
+        if not waits_for_star_check:
+            await advance_attempt(db, attempt, order)
+        elif not queued:
+            # The STAR check can't happen, so don't leave the user waiting
+            # forever: accept the answer as it is and move on.
+            await db.answers.update_one(
+                {"_id": answer["_id"]}, {"$set": {"status": "answered", "answered_at": now}}
+            )
+            await advance_attempt(db, attempt, order)
 
     fresh = await db.attempts.find_one({"_id": attempt["_id"]})
     return {"status": fresh["status"], "current_question": fresh["current_question"]}
 
 
-async def queue_for_processing(db: AsyncDatabase, queue: JobQueue, answer_id: ObjectId, recording_id: str) -> None:
-    """Put a "transcribe and score this" job onto the SQS queue."""
+async def queue_for_processing(db: AsyncDatabase, queue: JobQueue, answer_id: ObjectId, recording_id: str) -> bool:
+    """Put a "transcribe and evaluate this" job onto the SQS queue. Returns True if it was sent."""
     now = datetime.now(UTC)
     if not queue.is_configured:
         await db.answers.update_one(
             {"_id": answer_id},
             {"$set": {"processing": {"status": "not_configured", "error": None, "updated_at": now}}},
         )
-        return
+        return False
 
     # ORDER MATTERS: mark it "queued" BEFORE sending the job. The worker can
     # be very quick - if we sent first, it might set "transcribing" and then
@@ -389,6 +466,7 @@ async def queue_for_processing(db: AsyncDatabase, queue: JobQueue, answer_id: Ob
     )
     try:
         await run_in_threadpool(queue.send_processing_job, str(answer_id), recording_id)
+        return True
     except Exception:
         # The video is safely stored either way; only the processing is missing.
         logger.exception("Couldn't queue answer %s for processing", answer_id)
@@ -396,16 +474,18 @@ async def queue_for_processing(db: AsyncDatabase, queue: JobQueue, answer_id: Ob
             {"_id": answer_id},
             {"$set": {"processing": {"status": "failed", "error": "Couldn't start processing", "updated_at": now}}},
         )
+        return False
 
 
 # ---------------------------------------------------------------------------
-# Watching an answer back
+# Watching a recording back
 # ---------------------------------------------------------------------------
 
 @router.get("/{attempt_id}/questions/{order}/video-url", response_model=VideoUrlResponse)
 async def get_video_url(
     attempt_id: str,
     order: int,
+    recording_id: str | None = None,  # optional "?recording_id=..." - the main answer if left out
     db: AsyncDatabase = Depends(get_db),
     user: dict = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
@@ -414,13 +494,15 @@ async def get_video_url(
     require_storage(storage)
     attempt = await load_own_attempt(db, attempt_id, user)  # <- the ownership check
 
-    answer = await db.answers.find_one(
-        {"attempt_id": attempt["_id"], "question_order": order, "status": "answered"}
-    )
-    if answer is None:
-        raise HTTPException(status_code=404, detail="No answer recorded for this question")
+    answer = await db.answers.find_one({"attempt_id": attempt["_id"], "question_order": order})
+    uploaded = [r for r in (answer or {}).get("recordings", []) if r["status"] == "uploaded"]
+    if recording_id is None:
+        recording = next((r for r in uploaded if r["kind"] == "main"), None)
+    else:
+        recording = next((r for r in uploaded if r["recording_id"] == recording_id), None)
+    if recording is None:
+        raise HTTPException(status_code=404, detail="No recording found for this question")
 
-    recording = next(r for r in answer["recordings"] if r["kind"] == "main" and r["status"] == "uploaded")
     url = await run_in_threadpool(storage.presign_download, recording["video_key"])
     return {
         "url": url,

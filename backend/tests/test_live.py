@@ -79,12 +79,18 @@ def test_status_changes_are_pushed_to_the_browser(logged_in_client, attempt_id):
 
     with logged_in_client.websocket_connect(f"/ws/attempts/{attempt_id}", headers=GOOD_ORIGIN) as ws:
         ws.send_json({"type": "auth", "token": "valid-token"})
-        assert ws.receive_json() == {"type": "processing_update", "answers": {"1": "queued"}}
+        assert ws.receive_json() == {
+            "type": "processing_update",
+            "answers": {"1": {"status": "answered", "processing": "queued", "follow_ups": 0}},
+        }
 
         # The worker moves the answer along...
         db.answers.update_one({"attempt_id": ObjectId(attempt_id)}, {"$set": {"processing.status": "transcribing"}})
         # ...and the browser hears about it without asking.
-        assert ws.receive_json() == {"type": "processing_update", "answers": {"1": "transcribing"}}
+        assert ws.receive_json() == {
+            "type": "processing_update",
+            "answers": {"1": {"status": "answered", "processing": "transcribing", "follow_ups": 0}},
+        }
 
         ws.send_json({"type": "ping"})
         assert ws.receive_json() == {"type": "pong"}
