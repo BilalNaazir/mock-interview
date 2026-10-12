@@ -94,3 +94,21 @@ details summary { cursor: pointer; margin-top: 12px; }
   animation: spin 0.8s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* --- Phase 4: STAR results and follow-ups --- */
+.badge.follow-up { border-color: var(--accent); color: var(--accent); }
+.waiting { display: flex; flex-direction: column; gap: 4px; max-width: 640px; margin: 16px 0; }
+.waiting p { margin: 0; }
+.star-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px; margin: 12px 0;
+}
+.star-cell {
+  display: flex; flex-direction: column; gap: 2px; padding: 10px;
+  border: 1px solid var(--border); border-left-width: 4px; border-radius: 8px; font-size: 0.9rem;
+}
+.star-cell.clear { border-left-color: #1a7f37; }
+.star-cell.partial { border-left-color: #bf8700; }
+.star-cell.missing { border-left-color: var(--danger); }
+.star-rating { font-weight: 600; }
+.follow-up-answer { margin-top: 20px; padding-top: 12px; border-top: 1px solid var(--border); }

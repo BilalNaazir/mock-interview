@@ -54,15 +54,15 @@ class JobQueue:
 
     # --- Used by the worker --------------------------------------------------
 
-    def receive_jobs(self, visibility_timeout: int = 300) -> list[ReceivedJob]:
+    def receive_jobs(self, visibility_timeout: int = 300, wait_seconds: int = 20) -> list[ReceivedJob]:
         response = self.client.receive_message(
             QueueUrl=self.queue_url,
             MaxNumberOfMessages=1,
             # LONG POLLING: if the queue is empty, wait up to 20 seconds for a
             # job to arrive before replying. Cheaper and faster than asking
             # over and over (the same idea as long polling from our list of
-            # ways for programs to talk).
-            WaitTimeSeconds=20,
+            # ways for programs to talk). Tests pass 0, so they don't wait.
+            WaitTimeSeconds=wait_seconds,
             # Hide the job from other workers for 5 minutes while we work.
             VisibilityTimeout=visibility_timeout,
             # Ask SQS to tell us how many times this job has been delivered.

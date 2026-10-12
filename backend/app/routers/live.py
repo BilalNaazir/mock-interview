@@ -1,9 +1,11 @@
 """
 live.py - Live updates over a WebSocket.
 
-When a candidate is looking at their answers, the browser opens a WebSocket
-here. Whenever the worker moves an answer along (queued -> transcribing ->
-scoring -> done), we push a short message, and the page fetches fresh data.
+While a candidate is waiting for something - their STAR check during the
+interview, or their results afterwards - the browser opens a WebSocket here.
+Whenever the worker moves an answer along (queued -> transcribing -> scoring
+-> done), asks a follow-up question, or accepts an answer, we push a short
+message, and the page fetches fresh data.
 
 HOW WE NOTICE CHANGES: the worker is a separate program, so it can't talk to
 the WebSocket connections held by this API. Instead, each connection checks
@@ -50,12 +52,26 @@ def get_websocket_db(websocket: WebSocket) -> AsyncDatabase:
     return websocket.app.state.db
 
 
-async def processing_snapshot(db: AsyncDatabase, attempt_id: ObjectId) -> dict[str, str | None]:
-    """A small summary of where each answer is: {"1": "done", "2": "transcribing", ...}"""
+async def processing_snapshot(db: AsyncDatabase, attempt_id: ObjectId) -> dict[str, dict]:
+    """
+    A small summary of where each answer is, for example:
+        {"1": {"status": "answered", "processing": "done", "follow_ups": 0},
+         "4": {"status": "awaiting_follow_up", "processing": "done", "follow_ups": 1}}
+    Any change in here - a new processing step, a follow-up question being
+    asked, an answer being accepted - rings the doorbell.
+    """
     answers = await db.answers.find(
-        {"attempt_id": attempt_id, "status": "answered"}, {"question_order": 1, "processing.status": 1}
+        {"attempt_id": attempt_id},
+        {"question_order": 1, "status": 1, "processing.status": 1, "follow_ups.number": 1},
     ).to_list()
-    return {str(a["question_order"]): a.get("processing", {}).get("status") for a in answers}
+    return {
+        str(a["question_order"]): {
+            "status": a["status"],
+            "processing": a.get("processing", {}).get("status"),
+            "follow_ups": len(a.get("follow_ups", [])),
+        }
+        for a in answers
+    }
 
 
 @router.websocket("/ws/attempts/{attempt_id}")

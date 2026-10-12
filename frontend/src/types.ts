@@ -43,25 +43,62 @@ export interface StartAttemptResponse {
 // Phase 3: where an answer is in the processing pipeline.
 export type ProcessingStatus = "queued" | "transcribing" | "scoring" | "done" | "failed" | "not_configured";
 
-export interface Evaluation {
+// An evaluation is EITHER a knowledge one OR a STAR one. The "kind" field
+// tells TypeScript which: after checking `evaluation.kind === "star"`, it
+// knows the STAR fields exist (this is called "narrowing").
+export interface KnowledgeEvaluation {
+  kind: "knowledge";
   score: number; // 0-100
   covered_points: string[];
   missing_points: string[];
   feedback: string;
 }
 
+export type StarRating = "clear" | "partial" | "missing";
+
+export interface StarElement {
+  rating: StarRating;
+  comment: string;
+}
+
+export interface StarEvaluation {
+  kind: "star";
+  score: number; // 0-100, worked out from the four ratings
+  feedback: string;
+  situation: StarElement;
+  task: StarElement;
+  action: StarElement;
+  result: StarElement;
+}
+
+export type Evaluation = KnowledgeEvaluation | StarEvaluation;
+
+export interface FollowUp {
+  number: number;
+  question: string;
+  answered: boolean;
+  recording_id: string | null;
+  transcript: string | null;
+}
+
 export interface AttemptQuestion extends Question {
   answered: boolean;
   processing_status: ProcessingStatus | null;
   transcript: string | null;
+  recording_id: string | null;
   evaluation: Evaluation | null;
+  follow_ups: FollowUp[];
 }
 
 export interface RecordingLimits {
   max_recording_seconds: number;
   max_upload_bytes: number;
   allowed_content_types: string[];
+  max_follow_ups: number;
 }
+
+// What the interview screen should show right now.
+export type CurrentStep = "record_answer" | "evaluating" | "record_follow_up" | "finished";
 
 export interface AttemptDetail {
   attempt_id: string;
@@ -69,6 +106,8 @@ export interface AttemptDetail {
   interview_title: string;
   status: AttemptStatus;
   current_question: number;
+  current_step: CurrentStep;
+  pending_follow_up: { number: number; question: string } | null;
   questions: AttemptQuestion[];
   limits: RecordingLimits;
 }
@@ -85,6 +124,8 @@ export interface AttemptSummary {
 
 export interface UploadUrlResponse {
   recording_id: string;
+  kind: "main" | "follow_up";
+  follow_up_number: number | null;
   upload_url: string;
   upload_headers: Record<string, string>;
   expires_in_seconds: number;

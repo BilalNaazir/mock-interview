@@ -14,11 +14,9 @@ The frontend has matching TypeScript types in frontend/src/types.ts.
 """
 
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
-
-from app.scoring import Evaluation
 
 
 class Question(BaseModel):
@@ -80,6 +78,43 @@ class StartAttemptResponse(BaseModel):
 ProcessingStatus = Literal["queued", "transcribing", "scoring", "done", "failed", "not_configured"]
 
 
+class KnowledgeEvaluationOut(BaseModel):
+    kind: Literal["knowledge"]
+    score: int
+    covered_points: list[str]
+    missing_points: list[str]
+    feedback: str
+
+
+class StarElementOut(BaseModel):
+    rating: Literal["clear", "partial", "missing"]
+    comment: str
+
+
+class StarEvaluationOut(BaseModel):
+    kind: Literal["star"]
+    score: int
+    feedback: str
+    situation: StarElementOut
+    task: StarElementOut
+    action: StarElementOut
+    result: StarElementOut
+
+
+# A "discriminated union": an evaluation is EITHER a knowledge one OR a STAR
+# one, and the "kind" field says which. Pydantic reads "kind" first and then
+# checks the rest of the fields against the right model.
+EvaluationOut = Annotated[KnowledgeEvaluationOut | StarEvaluationOut, Field(discriminator="kind")]
+
+
+class FollowUpOut(BaseModel):
+    number: int                 # 1, 2 or 3
+    question: str
+    answered: bool
+    recording_id: str | None    # for playing the follow-up answer back
+    transcript: str | None
+
+
 class AttemptQuestion(BaseModel):
     order: int
     type: Literal["knowledge", "situational"]
@@ -88,7 +123,23 @@ class AttemptQuestion(BaseModel):
     # Phase 3: filled in by the worker. None until there's something to show.
     processing_status: ProcessingStatus | None = None
     transcript: str | None = None
-    evaluation: Evaluation | None = None
+    recording_id: str | None = None
+    evaluation: EvaluationOut | None = None
+    # Phase 4: follow-up questions asked about a situational answer.
+    follow_ups: list[FollowUpOut] = []
+
+
+class PendingFollowUp(BaseModel):
+    number: int
+    question: str
+
+
+# What the interview screen should show right now:
+#   record_answer     -> record the main answer to the current question
+#   evaluating        -> wait: the worker is checking the answer against STAR
+#   record_follow_up  -> record an answer to the follow-up question
+#   finished          -> all done
+CurrentStep = Literal["record_answer", "evaluating", "record_follow_up", "finished"]
 
 
 class RecordingLimits(BaseModel):
@@ -96,6 +147,7 @@ class RecordingLimits(BaseModel):
     max_recording_seconds: int
     max_upload_bytes: int
     allowed_content_types: list[str]
+    max_follow_ups: int
 
 
 class AttemptDetail(BaseModel):
@@ -104,6 +156,8 @@ class AttemptDetail(BaseModel):
     interview_title: str
     status: AttemptStatus
     current_question: int  # the question being answered now (6 once all 5 are done)
+    current_step: CurrentStep
+    pending_follow_up: PendingFollowUp | None  # set when current_step is "record_follow_up"
     questions: list[AttemptQuestion]
     limits: RecordingLimits
 
@@ -126,6 +180,8 @@ class UploadUrlRequest(BaseModel):
 
 class UploadUrlResponse(BaseModel):
     recording_id: str
+    kind: Literal["main", "follow_up"]
+    follow_up_number: int | None
     upload_url: str
     # The browser MUST send exactly these headers with the upload,
     # because they're part of the presigned URL's signature.

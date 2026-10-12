@@ -113,6 +113,14 @@ def make_client(user: dict | None):
 
 
 @pytest.fixture
+def db():
+    """Direct access to the test database (as the worker has)."""
+    client = MongoClient(os.environ["MONGODB_URI"])
+    yield client["mock_interview_test"]
+    client.close()
+
+
+@pytest.fixture
 def client():
     """A test client where nobody is logged in."""
     # `with` runs the app's startup code (connect to Mongo, seed) and shutdown.

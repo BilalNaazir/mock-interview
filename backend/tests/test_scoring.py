@@ -59,3 +59,49 @@ def test_the_result_is_parsed_into_an_evaluation():
 def test_out_of_range_scores_are_kept_within_0_to_100():
     scorer, _ = make_scorer({**GOOD_RESULT, "score": 140})
     assert scorer.score_knowledge_answer("Q", ["a"], "T").score == 100
+
+
+# ---------------------------------------------------------------------------
+# STAR evaluation (Phase 4)
+# ---------------------------------------------------------------------------
+
+from app.scoring import Exchange  # noqa: E402
+
+STAR_RESULT = {
+    "situation": {"rating": "clear", "comment": "Clear context."},
+    "task": {"rating": "clear", "comment": "Clear goal."},
+    "action": {"rating": "partial", "comment": "Mostly 'we'."},
+    "result": {"rating": "missing", "comment": "No outcome."},
+    "feedback": "Good start.",
+    "follow_up_question": "What was the result?",
+}
+
+
+def make_star_scorer():
+    client = FakeAnthropicClient(STAR_RESULT)
+    return ClaudeScorer(model="claude-haiku-4-5-20251001", client=client), client
+
+
+def test_star_check_forces_the_star_tool():
+    scorer, client = make_star_scorer()
+    scorer.evaluate_star([Exchange("Tell me about a time...", "We fixed it.")])
+    assert client.requests[0]["tool_choice"] == {"type": "tool", "name": "record_star_evaluation"}
+
+
+def test_star_check_sends_the_whole_conversation_in_order():
+    scorer, client = make_star_scorer()
+    scorer.evaluate_star([
+        Exchange("Tell me about a time...", "We fixed a slow API."),
+        Exchange("What did YOU do?", "I added an index."),
+    ])
+    message = client.requests[0]["messages"][0]["content"]
+    assert message.index("Original question: Tell me about a time...") < message.index("Follow-up question 1")
+    assert "<transcript>\nI added an index.\n</transcript>" in message
+
+
+def test_star_result_is_parsed_and_scored_by_our_code():
+    scorer, _ = make_star_scorer()
+    star = scorer.evaluate_star([Exchange("Q", "A")])
+    assert star.weak_elements() == ["action", "result"]
+    assert star.score == 25 + 25 + 12 + 0
+    assert star.follow_up_question == "What was the result?"
