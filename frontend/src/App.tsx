@@ -4,10 +4,12 @@ import Header from "./components/Header";
 import RequireAuth from "./components/RequireAuth";
 import AttemptPage from "./pages/AttemptPage";
 import AttemptReviewPage from "./pages/AttemptReviewPage";
+import CommunityPage from "./pages/CommunityPage";
 import HomePage from "./pages/HomePage";
 import InterviewPage from "./pages/InterviewPage";
 import MyInterviewsPage from "./pages/MyInterviewsPage";
 import NotFoundPage from "./pages/NotFoundPage";
+import SharedAnswerPage from "./pages/SharedAnswerPage";
 
 export default function App() {
   return (
@@ -24,6 +26,8 @@ export default function App() {
           <Route path="/attempts/:attemptId" element={<RequireAuth><AttemptPage /></RequireAuth>} />
           <Route path="/attempts/:attemptId/review" element={<RequireAuth><AttemptReviewPage /></RequireAuth>} />
           <Route path="/my-interviews" element={<RequireAuth><MyInterviewsPage /></RequireAuth>} />
+          <Route path="/community" element={<RequireAuth><CommunityPage /></RequireAuth>} />
+          <Route path="/community/answers/:answerId" element={<RequireAuth><SharedAnswerPage /></RequireAuth>} />
 
           <Route path="*" element={<NotFoundPage />} />
         </Routes>

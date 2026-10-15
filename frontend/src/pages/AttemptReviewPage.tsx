@@ -1,8 +1,10 @@
 // AttemptReviewPage.tsx - Watch back every answer, with transcripts and feedback.
 // Results appear live as the worker finishes each answer.
+import { useState } from "react";
 import { useAuth } from "react-oidc-context";
 import { Link, useParams } from "react-router";
-import { useApi } from "../api";
+import { apiPut, useApi } from "../api";
+import ShareToggle from "../components/ShareToggle";
 import { useAttemptUpdates } from "../hooks/useAttemptUpdates";
 import type {
   AttemptDetail,
@@ -149,6 +151,18 @@ export default function AttemptReviewPage() {
   const anythingInProgress = attempt?.questions.some((q) => IN_PROGRESS.includes(q.processing_status)) ?? false;
   useAttemptUpdates(attemptId, token, reload, anythingInProgress);
 
+  // Phase 5: share or un-share every finished answer at once.
+  const [sharingAll, setSharingAll] = useState(false);
+  async function setAllVisibility(visibility: "shared" | "private") {
+    setSharingAll(true);
+    try {
+      await apiPut(`/attempts/${attemptId}/visibility`, token, { visibility });
+      reload();
+    } finally {
+      setSharingAll(false);
+    }
+  }
+
   // As before: show "Loading" only the first time, not on every live reload.
   if (loading && !attempt) return <p className="muted">Loading your answers...</p>;
   if (error) return <p className="error">{error.message}</p>;
@@ -164,6 +178,18 @@ export default function AttemptReviewPage() {
         <p className="muted">Your answers are being processed. Results appear here as soon as they're ready.</p>
       )}
 
+      {attempt.questions.some((q) => q.answered) && (
+        <div className="share-all">
+          <span className="muted">Help others practise:</span>
+          <button className="button secondary" disabled={sharingAll} onClick={() => setAllVisibility("shared")}>
+            Share all answers
+          </button>
+          <button className="button secondary" disabled={sharingAll} onClick={() => setAllVisibility("private")}>
+            Make all private
+          </button>
+        </div>
+      )}
+
       {attempt.questions.map((question) => (
         <section key={question.order} className="card answer">
           <h2>
@@ -174,6 +200,15 @@ export default function AttemptReviewPage() {
             <>
               <AnswerVideo attemptId={attempt.attempt_id} order={question.order} token={token} />
               <Results question={question} attemptId={attempt.attempt_id} token={token} />
+              {question.answered && (
+                <ShareToggle
+                  attemptId={attempt.attempt_id}
+                  order={question.order}
+                  visibility={question.visibility}
+                  token={token}
+                  onChanged={reload}
+                />
+              )}
             </>
           ) : (
             <p className="muted">Not answered yet.</p>

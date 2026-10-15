@@ -51,6 +51,14 @@ async def create_indexes(db: AsyncDatabase) -> None:
     # Exactly one answer per question per attempt - enforced by the database.
     await db.answers.create_index([("attempt_id", ASCENDING), ("question_order", ASCENDING)], unique=True)
 
+    # Phase 5: the Community page asks for "shared answers, newest first".
+    await db.answers.create_index([("visibility", ASCENDING), ("answered_at", DESCENDING)])
+    # The search limit counts one user's searches in the last hour.
+    await db.search_log.create_index([("user_sub", ASCENDING), ("created_at", DESCENDING)])
+    # A TTL ("time to live") index: MongoDB deletes each search record by
+    # itself 7 days after created_at, so the log never grows forever.
+    await db.search_log.create_index("created_at", expireAfterSeconds=7 * 24 * 60 * 60, name="search_log_ttl")
+
 
 def get_db(request: Request) -> AsyncDatabase:
     """

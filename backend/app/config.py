@@ -14,6 +14,7 @@ it's "mock_interview_prod". The code never needs to know which one it is.
 from functools import lru_cache
 from typing import Literal
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -80,6 +81,25 @@ class Settings(BaseSettings):
     # The most follow-up questions asked for one situational question. Our
     # CODE enforces this limit - we never rely on the AI to stop by itself.
     max_follow_ups: int = 3
+
+    # --- Sharing and search (Phase 5) ---------------------------------------
+    # Voyage AI turns text into embeddings. Unlike boto3 and anthropic, we call
+    # Voyage ourselves, so our code needs the key. SecretStr hides it: printing
+    # the settings shows "**********" instead of the real key.
+    voyage_api_key: SecretStr = SecretStr("")
+    embedding_model: str = "voyage-4-lite"   # the cheapest current Voyage model
+    embedding_dimensions: int = 1024         # how many numbers in each embedding
+    # The name of the vector search index on the answers collection.
+    vector_index_name: str = "answer_embeddings"
+    # Create the vector index at startup if it's missing. Tests switch this
+    # off, because they use a pretend search instead.
+    create_vector_index: bool = True
+    # The search agent: which Claude model, and how many steps it may take.
+    search_agent_model: str = "claude-haiku-4-5-20251001"
+    search_agent_max_steps: int = 6
+    # Each search costs a little money (Claude + Voyage), so each user gets a
+    # limited number per hour - a cost guardrail.
+    searches_per_hour: int = 30
 
     # --- Live updates (WebSockets) -------------------------------------------
     ws_auth_timeout_seconds: float = 10.0   # time allowed to send the login token
