@@ -16,7 +16,7 @@ import os
 # read at import time. Values here are fakes, safe to commit.
 os.environ["ENVIRONMENT"] = "dev"
 os.environ["MONGODB_DB_NAME"] = "mock_interview_test"
-os.environ.setdefault("MONGODB_URI", "mongodb://localhost:27017")
+os.environ.setdefault("MONGODB_URI", "mongodb://localhost:27017/?directConnection=true")
 os.environ["COGNITO_REGION"] = "eu-north-1"
 os.environ["COGNITO_USER_POOL_ID"] = "eu-north-1_TestPool"
 os.environ["COGNITO_CLIENT_ID"] = "test-client-id"
@@ -28,6 +28,10 @@ os.environ["SQS_PROCESSING_QUEUE_URL"] = "https://sqs.eu-north-1.amazonaws.com/1
 # Make the WebSocket check for changes very often, so tests run fast.
 os.environ["WS_POLL_INTERVAL_SECONDS"] = "0.05"
 os.environ["WS_AUTH_TIMEOUT_SECONDS"] = "0.5"
+# Phase 5: tests use a pretend vector search (see helpers.py), so don't try
+# to create a real vector index, and make sure no real Voyage key is used.
+os.environ["CREATE_VECTOR_INDEX"] = "false"
+os.environ["VOYAGE_API_KEY"] = ""
 # Fake AWS keys. moto accepts anything; these guarantee that even a mistake
 # could never use your real AWS account from a test.
 os.environ["AWS_ACCESS_KEY_ID"] = "testing"
@@ -74,6 +78,7 @@ def fresh_attempts():
     db = client["mock_interview_test"]
     db.attempts.delete_many({})
     db.answers.delete_many({})
+    db.search_log.delete_many({})
     yield
     client.close()
 

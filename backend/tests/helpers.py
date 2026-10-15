@@ -107,3 +107,101 @@ def run_worker(ctx):
             queue.delete_job(job)  # like the real worker loop
             finished += 1
     return finished
+
+
+# ---------------------------------------------------------------------------
+# Phase 5: pretend embeddings and a pretend vector search
+# ---------------------------------------------------------------------------
+
+import math  # noqa: E402
+import re  # noqa: E402
+import zlib  # noqa: E402
+
+from app.vector_search import FILTER_FIELDS, AnswerSearch  # noqa: E402
+
+DIMENSIONS = 1024
+
+
+def word_vector(text: str) -> list[float]:
+    """
+    A pretend embedding: each word adds 1 to one of 1024 slots (chosen by a
+    checksum of the word), then the list is scaled to length 1. Texts that
+    share words get similar vectors - a crude stand-in for real meaning.
+    """
+    vector = [0.0] * DIMENSIONS
+    for word in re.findall(r"[a-z]+", text.lower()):
+        vector[zlib.crc32(word.encode()) % DIMENSIONS] += 1.0
+    length = math.sqrt(sum(v * v for v in vector)) or 1.0
+    return [v / length for v in vector]
+
+
+class FakeEmbedder:
+    """Pretend Voyage: both the worker's method and the API's method."""
+
+    def __init__(self, fail=False):
+        self.fail = fail
+        self.documents = []
+        self.queries = []
+
+    def embed_documents(self, texts):
+        if self.fail:
+            raise RuntimeError("Voyage is down")
+        self.documents.extend(texts)
+        return [word_vector(text) for text in texts]
+
+    async def embed_query(self, text):
+        self.queries.append(text)
+        return word_vector(text)
+
+
+class InMemoryAnswerSearch(AnswerSearch):
+    """
+    Pretend MongoDB vector search: loads the matching answers and ranks them
+    in Python. It applies the same rules as the real pipeline - shared only,
+    and only the allowed filter fields.
+    """
+
+    def __init__(self, db, settings):
+        super().__init__(db, settings, available=True)
+        self.calls = []
+
+    async def search(self, query_vector, filters, limit=5):
+        self.calls.append(filters)
+        query = {"visibility": "shared", "embedding": {"$exists": True}}
+        query.update({k: v for k, v in filters.items() if k in FILTER_FIELDS and v is not None})
+        answers = await self.db.answers.find(query).to_list()
+        for answer in answers:
+            # Cosine similarity: both vectors have length 1, so it's the dot product.
+            answer["search_score"] = sum(a * b for a, b in zip(query_vector, answer.pop("embedding"), strict=True))
+        answers.sort(key=lambda a: a["search_score"], reverse=True)
+        return answers[:limit]
+
+
+def make_shared_answer(
+    db, interview_slug, question_order, transcript, visibility="shared", user_sub="someone-else-456"
+):
+    """Put a finished, embedded answer straight into the test database."""
+    from bson import ObjectId
+
+    from app.embeddings import build_answer_text
+
+    interview = db.interviews.find_one({"slug": interview_slug})
+    question = next(q for q in interview["questions"] if q["order"] == question_order)
+    answer = {
+        "attempt_id": ObjectId(),
+        "user_sub": user_sub,
+        "interview_slug": interview_slug,
+        "question_order": question_order,
+        "question_type": question["type"],
+        "question_text": question["text"],
+        "status": "answered",
+        "visibility": visibility,
+        "recordings": [{"recording_id": "r1", "kind": "main", "status": "uploaded", "transcript": transcript,
+                        "video_key": "videos/secret/key.webm"}],
+        "follow_ups": [],
+        "evaluation": {"kind": "knowledge", "score": 80, "covered_points": [], "missing_points": [],
+                       "feedback": "Nice."},
+    }
+    answer["search_text"] = build_answer_text(answer)
+    answer["embedding"] = word_vector(answer["search_text"])
+    return str(db.answers.insert_one(answer).inserted_id)

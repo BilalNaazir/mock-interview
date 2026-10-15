@@ -6,4 +6,3 @@ faster-whisper==1.2.1
 # faster-whisper 1.2.1 still uses, which crashes transcription, so we stay on
 # the newest version that works with it.
 av==18.1.0
-anthropic==1.11.0

@@ -81,6 +81,9 @@ export interface FollowUp {
   transcript: string | null;
 }
 
+// Phase 5: who can see an answer.
+export type Visibility = "private" | "shared";
+
 export interface AttemptQuestion extends Question {
   answered: boolean;
   processing_status: ProcessingStatus | null;
@@ -88,6 +91,7 @@ export interface AttemptQuestion extends Question {
   recording_id: string | null;
   evaluation: Evaluation | null;
   follow_ups: FollowUp[];
+  visibility: Visibility;
 }
 
 export interface RecordingLimits {
@@ -140,4 +144,36 @@ export interface VideoUrlResponse {
   url: string;
   content_type: string;
   expires_in_seconds: number;
+}
+
+// --- Phase 5: the Community pages -----------------------------------------
+// These mirror the models in backend/app/models.py. Notice there's no field
+// for anyone's name or video: the backend never sends them.
+
+export interface VisibilityResponse {
+  visibility: Visibility;
+  changed: number;
+}
+
+export interface SharedAnswerSummary {
+  answer_id: string;
+  interview_slug: string;
+  interview_title: string;
+  question_order: number;
+  question_type: QuestionType;
+  question_text: string;
+  excerpt: string;
+  score: number | null;
+  is_mine: boolean;
+}
+
+export interface SharedAnswerDetail extends SharedAnswerSummary {
+  transcript: string | null;
+  follow_ups: { number: number; question: string; transcript: string | null }[];
+  evaluation: Evaluation | null;
+}
+
+export interface SearchResponse {
+  reply: string;
+  answers: SharedAnswerSummary[];
 }

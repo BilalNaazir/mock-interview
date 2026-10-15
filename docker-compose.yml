@@ -2,8 +2,8 @@
 #     docker compose up --build
 #
 # It starts three containers:
-#   - mongo:   a MongoDB database, with its data saved in a Docker "volume"
-#              so it survives restarts
+#   - mongo:   MongoDB's "Atlas Local" image: MongoDB plus vector search
+#              (Phase 5), with its data saved in Docker volumes
 #   - backend: your FastAPI app, reloading automatically when you edit code
 #   - worker:  takes jobs off the SQS queue, transcribes and scores answers
 #
@@ -11,18 +11,20 @@
 
 services:
   mongo:
-    image: mongo:8
+    # The same database engine as MongoDB Atlas in the cloud, including the
+    # search engine that powers vector search - but running on your laptop.
+    # It has its own built-in health check, so we don't define one.
+    image: mongodb/mongodb-atlas-local:8.0
+    hostname: mongo
     ports:
       # 127.0.0.1 = only reachable from THIS computer, not the rest of the network
       - "127.0.0.1:27017:27017"
     volumes:
-      - mongo-data:/data/db      # keeps your data when containers restart
-    healthcheck:
-      # Compose checks this to know when MongoDB is actually ready.
-      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
+      # New volume names, so this starts with a fresh, empty database. The
+      # old volume was written by MongoDB 8.3, and an older version (8.0)
+      # can't safely open data files made by a newer one.
+      - atlas-data:/data/db
+      - atlas-config:/data/configdb
 
   backend:
     build: ./backend             # build the image from backend/Dockerfile
@@ -31,7 +33,9 @@ services:
       # Inside Docker's network, containers reach each other by service name,
       # so "mongo" here means "the mongo container above". This overrides
       # the localhost address in .env.
-      MONGODB_URI: mongodb://mongo:27017
+      # directConnection=true: Atlas Local runs as a one-member "replica set",
+      # and this tells the driver to talk to that one member directly.
+      MONGODB_URI: mongodb://mongo:27017/?directConnection=true
       # Makes auto-reload notice file changes on Windows and macOS.
       WATCHFILES_FORCE_POLLING: "true"
     ports:
@@ -52,7 +56,7 @@ services:
       dockerfile: Dockerfile.worker   # the worker's own recipe
     env_file: ./backend/.env
     environment:
-      MONGODB_URI: mongodb://mongo:27017
+      MONGODB_URI: mongodb://mongo:27017/?directConnection=true
     volumes:
       # Shares your code like the backend does. The worker doesn't reload by
       # itself, though: after editing worker code, run
@@ -67,5 +71,6 @@ services:
     # SQS, S3, MongoDB and Claude by itself.
 
 volumes:
-  mongo-data:
+  atlas-data:
+  atlas-config:
   whisper-models:

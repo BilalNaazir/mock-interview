@@ -18,7 +18,7 @@ export class ApiError extends Error {
 // logged in), attach it as "Authorization: Bearer <token>" - this is what
 // the backend's get_current_user checks.
 export async function apiRequest<T>(
-  method: "GET" | "POST",
+  method: "GET" | "POST" | "PUT",
   path: string,
   accessToken?: string,
   body?: unknown,
@@ -50,6 +50,9 @@ export async function apiRequest<T>(
 export const apiGet = <T>(path: string, accessToken?: string) => apiRequest<T>("GET", path, accessToken);
 export const apiPost = <T>(path: string, accessToken?: string, body?: unknown) =>
   apiRequest<T>("POST", path, accessToken, body);
+// PUT means "set this to exactly this value" - used for changing visibility.
+export const apiPut = <T>(path: string, accessToken?: string, body?: unknown) =>
+  apiRequest<T>("PUT", path, accessToken, body);
 
 // A reusable React "hook" that loads data and tracks the three states every
 // data-loading screen needs: loading, error, and success. It also returns

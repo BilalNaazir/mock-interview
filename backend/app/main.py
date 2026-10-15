@@ -9,17 +9,21 @@ generated automatically by FastAPI from the code.
 """
 
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.config import get_settings
+from app.config import Settings, get_settings
 from app.db import connect_to_mongo, create_indexes
+from app.embeddings import VoyageEmbedder
 from app.queue import JobQueue
-from app.routers import attempts, health, interviews, live, users
+from app.routers import attempts, community, health, interviews, live, users
+from app.search_agent import SearchAgent
 from app.seed import seed_interviews
 from app.storage import VideoStorage
+from app.vector_search import AnswerSearch, ensure_vector_index
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("mock_interview")
@@ -46,11 +50,38 @@ async def lifespan(app: FastAPI):
     app.state.queue = JobQueue(settings)
     if not app.state.queue.is_configured:
         logger.warning("SQS_PROCESSING_QUEUE_URL is not set - answers will be stored but not processed")
+    await set_up_search(app, db, settings)
     logger.info("Started in '%s' environment, database '%s'", settings.environment, settings.mongodb_db_name)
 
     yield  # <- the app runs and serves requests here
 
     await client.close()
+
+
+async def set_up_search(app: FastAPI, db, settings: Settings) -> None:
+    """
+    Search needs three things: vector search in the database, a Voyage key
+    (to embed queries) and an Anthropic key (for the agent). If any is
+    missing, search is switched off - the rest of the app works as normal.
+    """
+    available = await ensure_vector_index(db, settings) if settings.create_vector_index else False
+    app.state.answer_search = AnswerSearch(db, settings, available)
+    app.state.search_agent = None
+
+    missing = []
+    if not available:
+        missing.append("vector search")
+    if not settings.voyage_api_key.get_secret_value():
+        missing.append("VOYAGE_API_KEY")
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        missing.append("ANTHROPIC_API_KEY")
+    if missing:
+        logger.warning("Search is switched off - missing: %s", ", ".join(missing))
+        return
+
+    app.state.search_agent = SearchAgent(db, app.state.answer_search, VoyageEmbedder(settings), settings)
+
+    logger.info("Search is switched on (vector index '%s')", settings.vector_index_name)
 
 
 def create_app() -> FastAPI:
@@ -78,6 +109,7 @@ def create_app() -> FastAPI:
     app.include_router(interviews.router)
     app.include_router(attempts.router)
     app.include_router(live.router)
+    app.include_router(community.router)
     return app
 
 

@@ -46,6 +46,8 @@ from app.models import (
     UploadUrlRequest,
     UploadUrlResponse,
     VideoUrlResponse,
+    VisibilityRequest,
+    VisibilityResponse,
 )
 from app.queue import JobQueue, get_queue
 from app.storage import VideoStorage, get_storage
@@ -125,6 +127,7 @@ async def build_attempt_detail(db: AsyncDatabase, attempt: dict, settings: Setti
             # The stored evaluation has extra bookkeeping fields (like model);
             # the response models keep only the public ones.
             "evaluation": answer.get("evaluation"),
+            "visibility": answer.get("visibility", "private"),
             "follow_ups": [
                 {
                     "number": f["number"],
@@ -509,3 +512,43 @@ async def get_video_url(
         "content_type": recording["content_type"],
         "expires_in_seconds": settings.video_url_expiry_seconds,
     }
+
+
+# ---------------------------------------------------------------------------
+# Sharing (Phase 5)
+# ---------------------------------------------------------------------------
+
+@router.put("/{attempt_id}/questions/{order}/visibility", response_model=VisibilityResponse)
+async def set_answer_visibility(
+    attempt_id: str,
+    order: int,
+    body: VisibilityRequest,
+    db: AsyncDatabase = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Share one answer with other candidates, or make it private again."""
+    attempt = await load_own_attempt(db, attempt_id, user)  # <- only the owner gets past this
+    # Only finished answers can be shared: half-recorded ones would be confusing.
+    result = await db.answers.update_one(
+        {"attempt_id": attempt["_id"], "question_order": order, "status": "answered"},
+        {"$set": {"visibility": body.visibility}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="No finished answer to share for this question")
+    return {"visibility": body.visibility, "changed": result.modified_count}
+
+
+@router.put("/{attempt_id}/visibility", response_model=VisibilityResponse)
+async def set_attempt_visibility(
+    attempt_id: str,
+    body: VisibilityRequest,
+    db: AsyncDatabase = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Share (or un-share) every finished answer in one interview at once."""
+    attempt = await load_own_attempt(db, attempt_id, user)
+    result = await db.answers.update_many(
+        {"attempt_id": attempt["_id"], "status": "answered"},
+        {"$set": {"visibility": body.visibility}},
+    )
+    return {"visibility": body.visibility, "changed": result.modified_count}

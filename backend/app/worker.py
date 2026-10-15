@@ -17,6 +17,7 @@ import sys
 from pymongo import MongoClient
 
 from app.config import get_settings
+from app.embeddings import VoyageEmbedder
 from app.processing import WorkerContext, handle_job
 from app.queue import JobQueue
 from app.scoring import ClaudeScorer
@@ -44,6 +45,14 @@ class ShutdownFlag:
         self.stopping = True
 
 
+def make_embedder(settings):
+    """Search is optional, so a missing Voyage key is a warning, not a reason to stop."""
+    if not settings.voyage_api_key.get_secret_value():
+        logger.warning("VOYAGE_API_KEY is not set - answers won't be made searchable")
+        return None
+    return VoyageEmbedder(settings)
+
+
 def main() -> None:
     settings = get_settings()
 
@@ -66,6 +75,7 @@ def main() -> None:
         transcriber=WhisperTranscriber(settings.whisper_model, settings.whisper_compute_type),
         scorer=scorer,
         settings=settings,
+        embedder=make_embedder(settings),
     )
     shutdown = ShutdownFlag()
     logger.info("Worker started in '%s' environment, waiting for jobs...", settings.environment)

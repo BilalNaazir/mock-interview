@@ -41,7 +41,7 @@ jobs:
           --health-retries 10
 
     env:
-      MONGODB_URI: mongodb://localhost:27017
+      MONGODB_URI: mongodb://localhost:27017/?directConnection=true
 
     steps:
       - uses: actions/checkout@v7

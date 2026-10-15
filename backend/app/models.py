@@ -75,6 +75,10 @@ class StartAttemptResponse(BaseModel):
 
 # Where an answer is in the processing pipeline (Phase 3). The browser shows
 # this, and the WebSocket announces each change.
+# Phase 5: "private" answers are only visible to their owner; "shared" ones
+# appear on the Community pages and in search.
+Visibility = Literal["private", "shared"]
+
 ProcessingStatus = Literal["queued", "transcribing", "scoring", "done", "failed", "not_configured"]
 
 
@@ -127,6 +131,8 @@ class AttemptQuestion(BaseModel):
     evaluation: EvaluationOut | None = None
     # Phase 4: follow-up questions asked about a situational answer.
     follow_ups: list[FollowUpOut] = []
+    # Phase 5: whether other candidates can see this answer.
+    visibility: Visibility = "private"
 
 
 class PendingFollowUp(BaseModel):
@@ -198,3 +204,64 @@ class VideoUrlResponse(BaseModel):
     url: str
     content_type: str
     expires_in_seconds: int
+
+
+# ---------------------------------------------------------------------------
+# Phase 5: sharing and the Community pages
+#
+# PRIVACY: none of these models has a field for the owner's name, email,
+# user ID, or the video. Pydantic only sends the fields listed in a model, so
+# those can never leak out of these endpoints - even by accident.
+# ---------------------------------------------------------------------------
+
+class VisibilityRequest(BaseModel):
+    visibility: Visibility
+
+
+class VisibilityResponse(BaseModel):
+    visibility: Visibility
+    changed: int  # how many answers were updated
+
+
+class SharedAnswerSummary(BaseModel):
+    """One card on the Community page."""
+    answer_id: str
+    interview_slug: str
+    interview_title: str
+    question_order: int
+    question_type: Literal["knowledge", "situational"]
+    question_text: str
+    excerpt: str
+    score: int | None
+    is_mine: bool  # lets the page say "Your answer" - without revealing anyone else
+
+
+class SharedFollowUp(BaseModel):
+    number: int
+    question: str
+    transcript: str | None
+
+
+class SharedAnswerDetail(BaseModel):
+    """The full view of one shared answer: transcripts and feedback, no video."""
+    answer_id: str
+    interview_slug: str
+    interview_title: str
+    question_order: int
+    question_type: Literal["knowledge", "situational"]
+    question_text: str
+    transcript: str | None
+    follow_ups: list[SharedFollowUp]
+    evaluation: EvaluationOut | None
+    is_mine: bool
+
+
+class SearchRequest(BaseModel):
+    # min_length / max_length: Pydantic rejects empty or huge questions
+    # before our code even runs (a 422 error).
+    question: str = Field(min_length=3, max_length=500)
+
+
+class SearchResponse(BaseModel):
+    reply: str
+    answers: list[SharedAnswerSummary]

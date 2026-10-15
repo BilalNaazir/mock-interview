@@ -30,6 +30,7 @@ from bson import ObjectId
 from pymongo.database import Database
 
 from app.config import Settings
+from app.embeddings import DocumentEmbedder, build_answer_text
 from app.interview_flow import next_question_fields
 from app.queue import ReceivedJob
 from app.scoring import Exchange, Scorer
@@ -47,6 +48,8 @@ class WorkerContext:
     transcriber: Transcriber
     scorer: Scorer
     settings: Settings
+    # Phase 5: makes embeddings for search. None means search is switched off.
+    embedder: DocumentEmbedder | None = None
 
 
 def set_processing_status(db: Database, answer_id: ObjectId, status: str, error: str | None = None) -> None:
@@ -196,7 +199,50 @@ def process_recording(job_body: dict, ctx: WorkerContext) -> str:
 
     # --- 4: done -----------------------------------------------------------
     set_processing_status(ctx.db, answer_id, "done")
+
+    # --- 5: make it searchable (Phase 5) -------------------------------------
+    # Only finished answers are embedded. A situational answer waiting for a
+    # follow-up isn't finished yet; it's embedded when it's finally accepted.
+    if embed_answer(ctx.db, ctx.embedder, ctx.settings, answer_id):
+        outcome += ", embedded for search"
     return outcome
+
+
+def embed_answer(db: Database, embedder: DocumentEmbedder | None, settings: Settings, answer_id: ObjectId) -> bool:
+    """
+    Create and save the embedding for one finished answer.
+    Returns True if it worked. Also used by backfill_embeddings.py.
+
+    Every answer is embedded, shared or not, so that sharing later makes it
+    searchable straight away. Private answers are still never returned:
+    every search filters on visibility = "shared".
+    """
+    if embedder is None:
+        return False
+    answer = db.answers.find_one({"_id": answer_id})
+    if answer is None or answer["status"] != "answered":
+        return False
+
+    text = build_answer_text(answer)
+    try:
+        [vector] = embedder.embed_documents([text])
+    except Exception:
+        # Search is a bonus: failing to embed must never fail the whole job,
+        # or the candidate would lose their score over it. The backfill
+        # script can embed this answer later.
+        logger.exception("Couldn't embed answer %s for search", answer_id)
+        return False
+
+    db.answers.update_one(
+        {"_id": answer_id},
+        {"$set": {
+            "embedding": vector,
+            "search_text": text,  # the exact text that was embedded, shown as search excerpts
+            "embedding_model": settings.embedding_model,
+            "embedded_at": datetime.now(UTC),
+        }},
+    )
+    return True
 
 
 def handle_job(job: ReceivedJob, ctx: WorkerContext) -> bool:

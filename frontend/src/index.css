@@ -112,3 +112,23 @@ details summary { cursor: pointer; margin-top: 12px; }
 .star-cell.missing { border-left-color: var(--danger); }
 .star-rating { font-weight: 600; }
 .follow-up-answer { margin-top: 20px; padding-top: 12px; border-top: 1px solid var(--border); }
+
+/* --- Phase 5: sharing and the Community pages --- */
+.small { font-size: 0.85rem; }
+.share-toggle { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); }
+.share-toggle .checkbox { margin: 0; }
+.share-toggle p { margin: 4px 0 0; }
+.share-all { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+.ask { margin-bottom: 24px; }
+.ask-form { display: flex; gap: 8px; flex-wrap: wrap; }
+.ask-form input, .filters select {
+  flex: 1; min-width: 220px; padding: 8px 10px; font: inherit; color: var(--text);
+  background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+}
+.reply { font-size: 1.05rem; margin: 16px 0; }
+.filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+.answer-card { display: block; color: var(--text); text-decoration: none; }
+.answer-card:hover { border-color: var(--accent); }
+.answer-card h3 { margin: 4px 0 8px; font-size: 1rem; }
+.answer-card p { margin: 0; }
+.badge.mine { margin-left: 8px; border-color: var(--accent); color: var(--accent); }
